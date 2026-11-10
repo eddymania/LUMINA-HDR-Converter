@@ -63,10 +63,24 @@ class HdrTranscoder(private val context:Context) {
    decoder=MediaCodec.createDecoderByType(mime)
    decoder.configure(source,decodeSurface,null,0)
    muxer=MediaMuxer(output,MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+   val audioCopier = audioUri?.let {
+    AudioTrackCopier(context, it)
+}
+
+var muxAudioTrack = -1
+
+val durationUs = if (
+    source.containsKey(MediaFormat.KEY_DURATION)
+) {
+    source.getLong(MediaFormat.KEY_DURATION)
+} else {
+    0L
+}
    extractor.selectTrack(track)
    encoder.start();decoder.start()
    var inputDone=false;var decodeDone=false;var encodeDone=false;var muxStarted=false;var muxTrack=-1
-   var frames=0;var lastPts=-1L
+   var frames = 0
+var lastPts = -1L
    val decInfo=MediaCodec.BufferInfo();val encInfo=MediaCodec.BufferInfo()
    while(!encodeDone) {
     if(!inputDone) {
@@ -89,14 +103,34 @@ class HdrTranscoder(private val context:Context) {
        val pts=decInfo.presentationTimeUs.coerceAtLeast(lastPts+1);lastPts=pts
        glPipe.render(texture,pts*1000)
        frames++
-       if(frames%15==0) progress("Memproses $frames bingkai...")
+      if (frames % 15 == 0 && durationUs > 0L) {
+    val percent = (
+        pts * 95L / durationUs
+    ).toInt().coerceIn(0, 95)
+
+    progress("Memproses HDR10: $percent%", percent)
+}
       }
       if(decInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM !=0) { decodeDone=true;encoder.signalEndOfInputStream() }
      }
     }
     while(true) {
      val index=encoder.dequeueOutputBuffer(encInfo,if(decodeDone) 10_000 else 0)
-     if(index==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { require(!muxStarted);muxTrack=muxer.addTrack(encoder.outputFormat);muxer.start();muxStarted=true }
+     
+if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+    require(!muxStarted)
+
+    muxTrack = muxer.addTrack(encoder.outputFormat)
+
+    if (audioCopier != null) {
+        muxAudioTrack = muxer.addTrack(
+            audioCopier.format
+        )
+    }
+
+    muxer.start()
+    muxStarted = true
+}
      else if(index>=0) {
       if(encInfo.size>0) { require(muxStarted); val buffer=encoder.getOutputBuffer(index)!!;buffer.position(encInfo.offset);buffer.limit(encInfo.offset+encInfo.size);muxer.writeSampleData(muxTrack,buffer,encInfo) }
       encodeDone=encInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM !=0
@@ -105,7 +139,22 @@ class HdrTranscoder(private val context:Context) {
     }
    }
    require(frames>0 && muxStarted) { "Tiada output video" }
-   progress("Selesai $frames bingkai. Periksa HDR10 metadata.")
+   
+if (audioCopier != null && muxAudioTrack >= 0) {
+    progress("Memasukkan audio...", 96)
+
+    audioCopier.copyTo(
+        muxer,
+        muxAudioTrack,
+        lastPts + 1L
+    ) { message ->
+        progress(message, 98)
+    }
+}
+
+audioCopier?.close()
+progress("HDR10 dan audio siap.", 99)
+
   } finally {
    runCatching { decoder?.stop() };runCatching { encoder?.stop() }
    runCatching { decoder?.release() };runCatching { encoder?.release() }
