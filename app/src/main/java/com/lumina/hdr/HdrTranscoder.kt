@@ -124,7 +124,25 @@ private class GlPipe(private val surface:Surface,private val width:Int,private v
  private val eglSurface:EGLSurface
  val textureId:Int
  private val program:Int
- private val vertices:FloatBuffer=ByteBuffer.allocateDirect(16*4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply { put(floatArrayOf(-1f,-1f,0f,1f,1f,-1f,1f,1f,-1f,1f,0f,0f,1f,1f,1f,0f));position(0) }
+
+private val vertices: FloatBuffer =
+    ByteBuffer.allocateDirect(16 * 4)
+        .order(ByteOrder.nativeOrder())
+        .asFloatBuffer()
+        .apply {
+            put(
+                floatArrayOf(
+                    // X, Y, U, V
+
+                    -1f, -1f, 0f, 0f, // Bawah kiri
+                     1f, -1f, 1f, 0f, // Bawah kanan
+
+                    -1f,  1f, 0f, 1f, // Atas kiri
+                     1f,  1f, 1f, 1f  // Atas kanan
+                )
+            )
+            position(0)
+        }
  init {
   require(EGL14.eglInitialize(display,IntArray(2),0,IntArray(2),0))
   val configAttrs=intArrayOf(EGL14.EGL_RENDERABLE_TYPE,4,EGL14.EGL_RED_SIZE,10,EGL14.EGL_GREEN_SIZE,10,EGL14.EGL_BLUE_SIZE,10,EGL14.EGL_ALPHA_SIZE,2,EGL14.EGL_NONE)
