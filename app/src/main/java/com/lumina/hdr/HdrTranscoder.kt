@@ -17,7 +17,12 @@ import kotlin.math.min
 
 /** Experimental inverse tone mapping. Never mark output validated without independent bitstream checks. */
 class HdrTranscoder(private val context:Context) {
- fun convert(uri:Uri, output:FileDescriptor, progress:(String)->Unit) {
+ fun convert(
+    uri: Uri,
+    output: FileDescriptor,
+    audioUri: Uri?,
+    progress: (String, Int) -> Unit
+) {
   val extractor=MediaExtractor(); var decoder:MediaCodec?=null; var encoder:MediaCodec?=null
   var muxer:MediaMuxer?=null; var gl:GlPipe?=null; var texture:SurfaceTexture?=null; var decodeSurface:Surface?=null
   val thread=HandlerThread("lumina-frame").apply { start() }
