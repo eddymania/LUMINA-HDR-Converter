@@ -1,5 +1,5 @@
 
-      - name: Install Android SDK packages
+      name: Install Android SDK packages
         shell: bash
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
