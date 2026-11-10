@@ -127,9 +127,8 @@ class MainActivity : Activity() {
 
         val hdrCard = card(body, "03  HDR SETTINGS")
         strength = slider(hdrCard, "HDR Strength", 100, 150) { "$it%" }
-        gamma = slider(hdrCard, "Gamma", 100, 140) { "%.2f".format(it / 100f) }
-        peak = slider(hdrCard, "Peak highlights", 400, 800) { "${maxOf(300, it)} nits" }
-        peak.progress = 400
+        gamma = slider(hdrCard, "Gamma", 0, 40) { "%.2f".format(1f + it / 100f) }
+        peak = slider(hdrCard, "Peak highlights", 100, 500) { "${300 + it} nits" }
         hdrCard.addView(text("Peak 300–800 nits (eksperimen). Metadata mastering masih nilai rujukan.", 12f, muted))
 
         val outputCard = card(body, "04  EXPORT")
@@ -195,8 +194,8 @@ class MainActivity : Activity() {
                 }
                 val settings = HdrSettings(
                     strength = strength.progress / 100f,
-                    gamma = gamma.progress / 100f,
-                    peakNits = maxOf(300, peak.progress).toFloat()
+                    gamma = 1f + gamma.progress / 100f,
+                    peakNits = (300 + peak.progress).toFloat()
                 )
                 exporting = true
                 updateButton()
