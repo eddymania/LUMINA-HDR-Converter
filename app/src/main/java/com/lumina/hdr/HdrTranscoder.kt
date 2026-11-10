@@ -21,11 +21,13 @@ class HdrTranscoder(private val context:Context) {
     uri: Uri,
     output: FileDescriptor,
     audioUri: Uri?,
+    settings: HdrSettings,
     progress: (String, Int) -> Unit
 ) {
   val extractor=MediaExtractor(); var decoder:MediaCodec?=null; var encoder:MediaCodec?=null
   var muxer:MediaMuxer?=null; var gl:GlPipe?=null; var texture:SurfaceTexture?=null; var decodeSurface:Surface?=null
   val thread=HandlerThread("lumina-frame").apply { start() }
+  var audioCopier: AudioTrackCopier? = null
   try {
    context.contentResolver.openFileDescriptor(uri,"r")!!.use { extractor.setDataSource(it.fileDescriptor) }
    var track=-1
@@ -54,7 +56,7 @@ class HdrTranscoder(private val context:Context) {
    encoder=MediaCodec.createByCodecName(encoderInfo.name)
    encoder.configure(format,null,null,MediaCodec.CONFIGURE_FLAG_ENCODE)
    val encodeSurface=encoder.createInputSurface()
-   gl=GlPipe(encodeSurface,outW,outH)
+   gl=GlPipe(encodeSurface,outW,outH,settings)
    val glPipe=gl
    texture=SurfaceTexture(glPipe.textureId).apply { setDefaultBufferSize(width,height) }
    val frameReady=AtomicBoolean(false)
@@ -63,7 +65,7 @@ class HdrTranscoder(private val context:Context) {
    decoder=MediaCodec.createDecoderByType(mime)
    decoder.configure(source,decodeSurface,null,0)
    muxer=MediaMuxer(output,MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-   val audioCopier = audioUri?.let {
+   audioCopier = audioUri?.let {
     AudioTrackCopier(context, it)
 }
 
@@ -122,10 +124,8 @@ if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
 
     muxTrack = muxer.addTrack(encoder.outputFormat)
 
-    if (audioCopier != null) {
-        muxAudioTrack = muxer.addTrack(
-            audioCopier.format
-        )
+    audioCopier?.let { copier ->
+        muxAudioTrack = muxer.addTrack(copier.format)
     }
 
     muxer.start()
@@ -140,22 +140,18 @@ if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
    }
    require(frames>0 && muxStarted) { "Tiada output video" }
    
-if (audioCopier != null && muxAudioTrack >= 0) {
-    progress("Memasukkan audio...", 96)
-
-    audioCopier.copyTo(
-        muxer,
-        muxAudioTrack,
-        lastPts + 1L
-    ) { message ->
-        progress(message, 98)
+if (muxAudioTrack >= 0) {
+    audioCopier?.let { copier ->
+        progress("Memasukkan audio...", 96)
+        copier.copyTo(muxer, muxAudioTrack, lastPts + 1L) { message ->
+            progress(message, 98)
+        }
     }
 }
-
-audioCopier?.close()
 progress("HDR10 dan audio siap.", 99)
 
   } finally {
+   runCatching { audioCopier?.close() }
    runCatching { decoder?.stop() };runCatching { encoder?.stop() }
    runCatching { decoder?.release() };runCatching { encoder?.release() }
    runCatching { muxer?.stop() };runCatching { muxer?.release() }
@@ -172,7 +168,7 @@ progress("HDR10 dan audio siap.", 99)
  }
 }
 
-private class GlPipe(private val surface:Surface,private val width:Int,private val height:Int) {
+private class GlPipe(private val surface:Surface,private val width:Int,private val height:Int, private val settings: HdrSettings) {
  private val display:EGLDisplay=EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
  private val context:EGLContext
  private val eglSurface:EGLSurface
@@ -217,6 +213,9 @@ private val vertices: FloatBuffer =
  }
  fun render(texture:SurfaceTexture,ptsNs:Long) {
   GLES20.glViewport(0,0,width,height);GLES20.glUseProgram(program)
+  GLES20.glUniform1f(GLES20.glGetUniformLocation(program,"uStrength"), settings.strength)
+  GLES20.glUniform1f(GLES20.glGetUniformLocation(program,"uGamma"), settings.gamma)
+  GLES20.glUniform1f(GLES20.glGetUniformLocation(program,"uPeak"), settings.peakNits)
   val transform=FloatArray(16);texture.getTransformMatrix(transform)
   GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(program,"uTexMatrix"),1,false,transform,0)
   GLES20.glActiveTexture(GLES20.GL_TEXTURE0);GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES,textureId)
@@ -239,12 +238,15 @@ private val vertices: FloatBuffer =
   private const val FRAG="""#extension GL_OES_EGL_image_external : require
 precision highp float;
 uniform samplerExternalOES uTexture;
+uniform float uStrength;
+uniform float uGamma;
+uniform float uPeak;
 varying vec2 vUV;
 vec3 decode709(vec3 c){return mix(c/4.5,pow((c+0.099)/1.099,vec3(1.0/0.45)),step(vec3(0.081),c));}
 vec3 pq(vec3 l){vec3 y=pow(clamp(l/10000.0,0.0,1.0),vec3(0.1593017578125));return pow((0.8359375+18.8515625*y)/(1.0+18.6875*y),vec3(78.84375));}
 void main(){vec3 s=decode709(texture2D(uTexture,vUV).rgb);
 // SDR reference 100 nits; smooth expansion into 400-nit range (not recovered scene detail).
-vec3 expanded=100.0*s+300.0*pow(s,vec3(2.2));
+vec3 expanded=100.0*pow(max(s,vec3(0.0)),vec3(uGamma))+(uPeak-100.0)*uStrength*pow(s,vec3(2.2));
 mat3 m=mat3(0.627404,0.069097,0.016391, 0.329283,0.919540,0.088013, 0.043313,0.011362,0.895595);
 vec3 bt2020=max(m*expanded,vec3(0.0));gl_FragColor=vec4(pq(bt2020),1.0);}
 """
